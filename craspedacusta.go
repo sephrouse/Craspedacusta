@@ -112,7 +112,7 @@ func showAllLinks() {
 func main() {
 	if len(os.Args) != 2 {
 		// at present, only one parameter can be executed. the parameter means the root URL.
-		fmt.Println("main: more parameters than expected. ", len(os.Args))
+		fmt.Println("main: invalid number of parameters than expected. ", len(os.Args))
 		return
 	}
 

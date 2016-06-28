@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -20,32 +21,31 @@ var baseUrl string
 
 const retryTimes = 3
 
-//var baseCatagory []string = {"Camera & Photo", "Cell Phones & Accessories", "Computers & Accessories", "Electronics", "Office Products", "Sports & Outdoors", "Toys & Games"}
-var baseCatagory []string = []string{"Camera & Photo"} //example for test.
+var baseCatagory []string = []string{"Camera & Photo", "Cell Phones & Accessories", "Computers & Accessories", "Electronics", "Office Products", "Sports & Outdoors", "Toys & Games"}
+var allCatagory []Catagory
 
-// allCataListLinks map[menu string] link string contain all top 100 items of each catagory.
-var allCataListLinks map[string]string
+func isInTaskList(catagory string) bool {
+	for i := range baseCatagory {
+		if baseCatagory[i] == catagory {
+			return true
+		}
+	}
+
+	return false
+}
+
+func getLinkMap(catagory string) map[string]string {
+	for i := range allCatagory {
+		if allCatagory[i].Name == catagory {
+			return allCatagory[i].Links
+		}
+	}
+
+	return nil
+}
 
 func getLinksFromMenu(wd selenium.WebDriver, level int, fatherMenu string, url string) (err error) {
 	err = nil
-	//
-	// caps := selenium.Capabilities{"browserName": "firefox"}
-	// wd, err := selenium.NewRemote(caps, "")
-	// if err != nil {
-	// 	//retry 3 times, otherwise print error and return it.
-	// 	for i := 0; i < retryTimes; i++ {
-	// 		wd, err = selenium.NewRemote(caps, "")
-	// 		if err == nil {
-	// 			break
-	// 		} else if err != nil && i == retryTimes-1 {
-	// 			fmt.Println("getLinksFromMenu: ", level, fatherMenu, url, err)
-	// 			return err
-	// 		} else {
-	// 			fmt.Println("getLinksFromMenu: retry ", i, " times.")
-	// 		}
-	// 	}
-	// }
-	// defer wd.Quit()
 
 	wd.Get(url)
 
@@ -72,14 +72,28 @@ func getLinksFromMenu(wd selenium.WebDriver, level int, fatherMenu string, url s
 	doc.Find(subMenuElement).Each(func(i int, s *goquery.Selection) {
 		path, exist := s.Attr("href")
 		if exist {
-			if level == 0 && s.Text() != baseCatagory[0] {
-				fmt.Println("find each : ", s.Text(), " is not ", baseCatagory[0])
+			if level == 0 && isInTaskList(s.Text()) == false {
+				fmt.Println("getLinksFromMenu: find each ", s.Text(), " is not what we want.")
 				return
 			}
-			menuName := fatherMenu + "|" + s.Text()
 
-			// need to store current link address, catagory name, level.
-			allCataListLinks[menuName] = path
+			var menuName string
+			if level == 0 {
+				menuName = s.Text()
+			} else if level == 1 {
+				menuName = fatherMenu
+			} else {
+				fmt.Println("getLinksFromMenu: level ", level, " is more than expected.")
+				return
+			}
+
+			links := getLinkMap(menuName)
+			if nil == links {
+				fmt.Println("getLinksFromMenu: getLinkMap gets nothing when menu name is ", menuName)
+				return
+			}
+
+			links[s.Text()] = strconv.Itoa(level) + "|" + path
 
 			// only gather catagories of both level I and II.
 			if level == 0 {
@@ -100,11 +114,26 @@ func getLinksFromMenu(wd selenium.WebDriver, level int, fatherMenu string, url s
 func showAllLinks() {
 	fmt.Println("showAllLinks start:")
 
-	for k, v := range allCataListLinks {
-		fmt.Println(k, v)
+	for i := range allCatagory {
+		fmt.Println("---", allCatagory[i].Name, " start:")
+
+		for k, v := range allCatagory[i].Links {
+			fmt.Println(k, v)
+		}
+
+		fmt.Println("---", allCatagory[i].Name, " end.")
 	}
 
 	fmt.Println("showAllLinks end.")
+}
+
+func initCatagory() {
+	allCatagory = make([]Catagory, len(baseCatagory))
+
+	for i := range allCatagory {
+		allCatagory[i].Name = baseCatagory[i]
+		allCatagory[i].Links = make(map[string]string)
+	}
 }
 
 // TODO: use multi thread to call getLinksFromMenu.
@@ -123,9 +152,8 @@ func main() {
 		return
 	}
 
-	// initial links map
-	// FIXME: the following map only stores 1 catagory. if there are more than 1 catagory, we need to make the maps as same amount as catagories.
-	allCataListLinks = make(map[string]string)
+	// there are more than 1 catagory, we need to make the maps as same amount as catagories.
+	initCatagory()
 
 	// create a new webdriver.
 	caps := selenium.Capabilities{"browserName": "firefox"}
@@ -153,7 +181,9 @@ func main() {
 		return
 	}
 
-	showAllLinks()
+	//showAllLinks()
+
+	// TODO: need to output information stored in catagory array into database.
 
 	fmt.Println("end of program.")
 }

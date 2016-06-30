@@ -1,6 +1,6 @@
 package main
 
-type Catagory struct {
+type CatagoryLink struct {
 	Name  string
 	Links map[string]string
 }

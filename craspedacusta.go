@@ -7,6 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"Craspedacusta/db"
+	"Craspedacusta/tentacle"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
@@ -22,7 +26,9 @@ var baseUrl string
 const retryTimes = 3
 
 var baseCatagory []string = []string{"Camera & Photo", "Cell Phones & Accessories", "Computers & Accessories", "Electronics", "Office Products", "Sports & Outdoors", "Toys & Games"}
-var allCatagory []Catagory
+var allCatagory []CatagoryLink
+
+var realTableName []string
 
 func isInTaskList(catagory string) bool {
 	for i := range baseCatagory {
@@ -128,12 +134,133 @@ func showAllLinks() {
 }
 
 func initCatagory() {
-	allCatagory = make([]Catagory, len(baseCatagory))
+	allCatagory = make([]CatagoryLink, len(baseCatagory))
 
 	for i := range allCatagory {
 		allCatagory[i].Name = baseCatagory[i]
 		allCatagory[i].Links = make(map[string]string)
 	}
+}
+
+func storeCatagoryInDB() error {
+	var count int = 0
+
+	for i := range allCatagory {
+		for j := range allCatagory[i].Links {
+			fmt.Println("j is ", j)
+			count++
+		}
+	}
+
+	fmt.Println("count is ", count)
+
+	var catagories = make([]db.Catagory, count)
+	var fatherName string
+	count = 0
+	for i := range allCatagory {
+		// look for the father menu.
+		for k, v := range allCatagory[i].Links {
+			levelAndUrl := strings.Split(v, "|")
+			if levelAndUrl[0] == "0" {
+				fatherName = k
+				break
+			}
+		}
+
+		for k, v := range allCatagory[i].Links {
+			catagories[count].Name = k
+			levelAndUrl := strings.Split(v, "|")
+			catagories[count].Level, _ = strconv.Atoi(levelAndUrl[0])
+			catagories[count].Url = levelAndUrl[1]
+			catagories[count].FatherName = fatherName
+
+			count++
+		}
+	}
+
+	err := db.InsertCatagory(catagories)
+	if err != nil {
+		fmt.Println("storeCatagoryInDB: insert catagories into database unsuccessfully. ", err)
+		return err
+	}
+
+	return nil
+}
+
+func createProductTables(catagories []string) error {
+	var tempTableName string
+
+	realTableName = make([]string, len(catagories))
+
+	for i := range catagories {
+		tempTableName = catagories[i]
+		tempTableName = strings.TrimSpace(tempTableName)
+		tempTableName = strings.Replace(tempTableName, " ", "", -1)
+		tempTableName = strings.Replace(tempTableName, "&", "", -1)
+
+		err := db.CreateProductTable(tempTableName)
+		if err != nil {
+			fmt.Println("createProductTables: error when create ", tempTableName, ". ", err)
+			return err
+		}
+
+		realTableName[i] = tempTableName
+	}
+
+	return nil
+}
+
+func formatProducts(oldProducts []tentacle.Product, father string) []db.Product {
+	var newProducts = make([]db.Product, 100)
+
+	for i := range oldProducts {
+		newProducts[i].Father = father
+		newProducts[i].Title = oldProducts[i].Title
+		newProducts[i].Url = oldProducts[i].Url
+		newProducts[i].Star = oldProducts[i].Star
+		newProducts[i].Rank = oldProducts[i].Rank
+		newProducts[i].Price = oldProducts[i].Price
+		newProducts[i].ImageUrl = oldProducts[i].ImageUrl
+		newProducts[i].Manufacturer = oldProducts[i].Manufacturer
+		newProducts[i].Parameters = oldProducts[i].Parameters
+	}
+
+	return newProducts
+}
+
+func storeProductsDetailInDB() error {
+	for i := range allCatagory {
+		for k, v := range allCatagory[i].Links {
+			levelAndUrl := strings.Split(v, "|")
+
+			var l = new(tentacle.List)
+			l.Url = levelAndUrl[1]
+
+			pages, err := l.GetPages()
+			if err != nil {
+				fmt.Println("storeProductsDetailInDB: l.GetPages error. ", err)
+				return err
+			}
+
+			products, err := l.GetProducts(pages)
+			if err != nil {
+				fmt.Println("storeProductsDetailInDB: l.GetProducts error. ", err)
+				return err
+			}
+
+			productRecords := formatProducts(products, k)
+
+			err = db.InsertProduct(productRecords, realTableName[i])
+			if err != nil {
+				fmt.Println("storeProductsDetailInDB: db.InsertProduct error. ", err)
+				return err
+			}
+
+			time.Sleep(13 * time.Minute)
+		}
+	}
+
+	return nil
 }
 
 // TODO: use multi thread to call getLinksFromMenu.
@@ -159,7 +286,7 @@ func main() {
 	caps := selenium.Capabilities{"browserName": "firefox"}
 	wd, err := selenium.NewRemote(caps, "")
 	if err != nil {
-		//retry 3 times, otherwise print error and return it.
+		// retry 3 times, otherwise print error and return it.
 		for i := 0; i < retryTimes; i++ {
 			wd, err = selenium.NewRemote(caps, "")
 			if err == nil {
@@ -183,7 +310,23 @@ func main() {
 
 	//showAllLinks()
 
-	// TODO: need to output information stored in catagory array into database.
+	// output information stored in catagory array into database.
+	if err = storeCatagoryInDB(); err != nil {
+		fmt.Println("main: storeCatagoryInDB failed. ", err)
+		return
+	}
+
+	if err = createProductTables(baseCatagory); err != nil {
+		fmt.Println("main: createProductTables failed. ", err)
+		return
+	}
+
+	if err = storeProductsDetailInDB(); err != nil {
+		fmt.Println("main: storeProductsDetailInDB failed. ", err)
+		return
+	}
+
+	db.Close()
 
 	fmt.Println("end of program.")
 }
